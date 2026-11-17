@@ -22,7 +22,8 @@ final class Filer {
             int n;
             while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
             out.flush();
-        } catch (Throwable ignored) {
+        } catch (Throwable e) {
+            android.util.Log.e("FISH", "copyTo fail: " + src + " -> " + dst, e);
         } finally {
             closeQuiet(in);
             closeQuiet(out);
