@@ -39,6 +39,72 @@ public class DeepSeek {
     }
 
     /**
+     * 非流式一次性调用：用来做上下文摘要。
+     * 同步阻塞，必须在后台线程调用。
+     * 返回摘要文本；失败返回 null。
+     */
+    public static String summarize(String apiKey, String transcript) {
+        HttpURLConnection conn = null;
+        try {
+            URL u = new URL(API_URL);
+            conn = (HttpURLConnection) u.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(20000);
+            conn.setReadTimeout(90000);
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+
+            JSONObject sys = new JSONObject();
+            sys.put("role", "system");
+            sys.put("content",
+                    "你是对话整理器。把给你的聊天记录压缩成简洁摘要。\n"
+                  + "要求：\n"
+                  + "1. 只留事实、情绪节点、答应过的事、两人之间的关系变化\n"
+                  + "2. 丢掉寒暄、重复、无关闲聊\n"
+                  + "3. 用第三人称写（他/我），条目式，每条一行，前面加 - \n"
+                  + "4. 总长控制在 600 字以内\n"
+                  + "5. 不要写「根据记录」这类废话，直接列事实");
+
+            JSONObject usr = new JSONObject();
+            usr.put("role", "user");
+            usr.put("content", transcript);
+
+            JSONArray msgs = new JSONArray();
+            msgs.put(sys);
+            msgs.put(usr);
+
+            JSONObject body = new JSONObject();
+            body.put("model", MODEL);
+            body.put("messages", msgs);
+            body.put("stream", false);
+            body.put("temperature", 0.3);
+            body.put("max_tokens", 1500);
+
+            OutputStream out = conn.getOutputStream();
+            out.write(body.toString().getBytes(StandardCharsets.UTF_8));
+            out.flush();
+            out.close();
+
+            int code = conn.getResponseCode();
+            if (code != 200) return null;
+
+            String raw = readAll(conn.getInputStream());
+            JSONObject resp = new JSONObject(raw);
+            JSONArray choices = resp.optJSONArray("choices");
+            if (choices == null || choices.length() == 0) return null;
+            JSONObject msg = choices.getJSONObject(0).optJSONObject("message");
+            if (msg == null) return null;
+            String text = msg.optString("content", "").trim();
+            return text.isEmpty() ? null : text;
+        } catch (Throwable e) {
+            return null;
+        } finally {
+            if (conn != null) try { conn.disconnect(); } catch (Exception ignored) {}
+        }
+    }
+
+    /**
      * 发一轮对话，流式返回。
      * 在后台线程调用。
      */
