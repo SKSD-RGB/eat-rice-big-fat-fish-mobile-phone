@@ -537,6 +537,7 @@ public class MainActivity extends Activity {
         public void onMemories() { showMemory(); }
 
         public void onAnalyze() { doAnalyze(); }
+        public void onCompress() { compressNow(true); }
 
         public void onChatBg() { showBgPicker(); }
 
@@ -639,7 +640,7 @@ public class MainActivity extends Activity {
     /** 手动导出：把所有数据打包到 /sdcard/Download/ 下一个文件夹 */
     private void exportAll() {
         try {
-            File base = getExternalFilesDir(null);
+            File base = backupRoot();
             File dst;
             if (base != null) {
                 dst = new File(base, "export");
@@ -714,10 +715,96 @@ public class MainActivity extends Activity {
         }
     }
 
+    /**
+     * 备份根目录。
+     * Android 13+ / MIUI 对 /sdcard/Android/data 的写入卡得很死，
+     * 所以一律写私有目录：/data/data/包名/files/backup/（App 自己的地盘，一定能写）
+     */
+    private File backupRoot() {
+        File fb = new File(getFilesDir(), "backup");
+        if (!fb.exists()) fb.mkdirs();
+        return fb;
+    }
+
+    /** 备份目录对外路径（提示用户怎么找） */
+    private String backupHint() {
+        return "应用私有目录 backup/（设置→导出全部数据 可另存）";
+    }
+
+    /** 把摘要同步到备份目录 */
+    private void syncSummaryOut() {
+        try {
+            File sf = new File(getFilesDir(), "summary.md");
+            File base = backupRoot();
+            if (base == null) {
+                android.util.Log.e("FISH", "syncSummary: base null");
+                return;
+            }
+            File bd = new File(base, "backup");
+            if (!bd.exists() && !bd.mkdirs()) {
+                android.util.Log.e("FISH", "syncSummary: mkdirs failed " + bd);
+            }
+            Filer.copyTo(sf, new File(bd, "summary-latest.md"));
+            File out = new File(bd, "summary-latest.md");
+            android.util.Log.i("FISH", "syncSummary srcExists=" + sf.exists()
+                    + " size=" + sf.length()
+                    + " outExists=" + out.exists()
+                    + " outSize=" + out.length());
+        } catch (Throwable e) {
+            android.util.Log.e("FISH", "syncSummary fail", e);
+        }
+    }
+
+    /** 手动压缩：把早期对话压成摘要 */
+    private void compressNow(boolean manual) {
+        String block = chat.pendingBlockForCompress(manual);
+        android.util.Log.i("FISH", "compress manual=" + manual
+                + " hist=" + chat.history().length()
+                + " blockLen=" + (block == null ? -1 : block.length())
+                + " summaryLen=" + chat.summary().length());
+        if (block == null) {
+            syncSummaryOut();
+            if (manual) toast("没什么可压了（已有摘要 " + chat.summary().length() + " 字）");
+            return;
+        }
+        final int upTo = chat.pendingCompressTo(manual);
+        final int before = chat.summary().length();
+        if (manual) toast("压缩中…");
+        ui.post(() -> {});
+        new Thread(() -> {
+            String sum = DeepSeek.summarize(apiKey(), block);
+            ui.post(() -> {
+                if (sum == null) {
+                    if (manual) toast("压缩失败（网络或 Key 问题）");
+                    return;
+                }
+                android.util.Log.i("FISH", "summarize OK len=" + sum.length() + " upTo=" + upTo);
+                String merged = chat.mergeSummary(sum, upTo);
+                int after = merged.length();
+                toast("压好了：" + before + " → " + after + " 字，"
+                        + upTo + " 条已归档");
+                syncSummaryOut();
+                autoBackup();
+                if (statusBar != null) applyStatusBar();
+            });
+        }).start();
+    }
+
+    /** 聊完自动检查一次 */
+    private void maybeAutoCompress() {
+        try {
+            if (chat.shouldCompress()) {
+                // 别打扰正在说话的，等它说完再压
+                ui.postDelayed(() -> compressNow(false), 2500);
+            }
+        } catch (Throwable ignored) {}
+    }
+
     /** 每次聊天后自动往外部目录写一份备份，卸载/崩溃都能救回来 */
     private void autoBackup() {
         try {
-            File base = getExternalFilesDir(null);
+            File base = backupRoot();
+            android.util.Log.i("FISH", "backup base=" + base);
             if (base == null) return;
             File dir = new File(base, "backup");
             if (!dir.exists()) dir.mkdirs();
@@ -731,9 +818,17 @@ public class MainActivity extends Activity {
 
             // 每次聊天都覆盖一份 latest，防住"最新那条"
             Filer.copyTo(hf, new File(dir, "history-latest.json"));
+            // 摘要也备一份，能直接看到压缩结果
+            try {
+                File sf = new File(getFilesDir(), "summary.md");
+                if (sf.exists()) Filer.copyTo(sf, new File(dir, "summary-latest.md"));
+            } catch (Throwable ignored) {}
             Filer.copyDir(mem, new File(dir, "memory-latest"));
 
             // 每隔一段时间留一份带时间戳的
+            android.util.Log.i("FISH", "backup done dir=" + dir.getAbsolutePath()
+                    + " histExists=" + hf.exists()
+                    + " memExists=" + mem.exists());
             long last = prefs().getLong("last_backup", 0L);
             if (System.currentTimeMillis() - last > 6 * 3600 * 1000L) {
                 Filer.copyTo(hf, new File(dir, "history-" + stamp + ".json"));
@@ -983,6 +1078,7 @@ public class MainActivity extends Activity {
         chat.append("user", mark, System.currentTimeMillis());
         chat.saveHistory();
         autoBackup();
+        maybeAutoCompress();
         scrollDown();
 
         // 也让她看见（当成一句「发了个表情」），保持上下文连贯
