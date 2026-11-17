@@ -18,8 +18,8 @@ KEYSTORE_PASS="${KEYSTORE_PASS:-changeme}"
 KEY_ALIAS="${KEY_ALIAS:-myapp}"
 KEY_PASS="${KEY_PASS:-$KEYSTORE_PASS}"
 
-VERSION_NAME="7.3"
-VERSION_CODE="73"
+VERSION_NAME="8.2"
+VERSION_CODE="82"
 
 # Python：只用来塞 dex，必须真能跑（Windows 商店占位程序会被排除）
 python_ok() {
