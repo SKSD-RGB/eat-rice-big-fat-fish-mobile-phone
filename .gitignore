@@ -1,0 +1,49 @@
+# ---- 构建产物 ----
+build/
+*.apk
+*.aab
+*.class
+*.dex
+*.zip
+
+# ---- 签名（绝对不进仓库）----
+*.keystore
+*.jks
+*.p12
+*.pfx
+signing.properties
+keystore.properties
+
+# ---- 本地私有数据 ----
+# 你的聊天记录、记忆、人格、表情包——这些是你自己的，不公开
+_private-assets/
+android/assets/seed_backup_private/
+android/assets/persona_backup_private/
+android/assets/seed/*
+!android/assets/seed/.gitkeep
+!android/assets/seed/*.example
+
+# ---- 用户上传的东西 ----
+android/assets/stickers/
+!android/assets/stickers/.gitkeep
+
+# ---- 截图 / 日志 ----
+logs/
+*.log
+*.bak
+*.tmp
+screenshot*.png
+
+# ---- 环境 / 密钥 ----
+.env
+.env.*
+secrets.json
+config.local.json
+
+# ---- 系统 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+.idea/
+.vscode/
