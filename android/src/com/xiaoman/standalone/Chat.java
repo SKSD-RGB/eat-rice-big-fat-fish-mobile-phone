@@ -24,6 +24,7 @@ public class Chat {
     private final Context ctx;
     private final Memory memory;
     private final File historyFile;
+    private final File summaryFile;
 
     private JSONArray history = new JSONArray();
     private String persona = "";
@@ -31,12 +32,19 @@ public class Chat {
     private static final int KEEP_TURNS = 20;     // 带进 prompt 的最近轮数
     private static final int MAX_HISTORY = 500;   // 本地最多存多少条
 
+    // ---- 上下文压缩 ----
+    public static final int AUTO_COMPRESS_AT = 30;   // 攒够多少条就自动压一次
+    private static final int SUMMARY_MAX_CHARS = 4000; // 摘要太长就再压一遍
+    private String summary = "";                     // 早期对话的摘要
+
     public Chat(Context c) {
         ctx = c.getApplicationContext();
         memory = new Memory(c);
         historyFile = new File(ctx.getFilesDir(), "history.json");
+        summaryFile = new File(ctx.getFilesDir(), "summary.md");
         loadPersona();
         loadHistory();
+        loadSummary();
     }
 
     public Memory memory() { return memory; }
@@ -136,6 +144,109 @@ public class Chat {
         }
     }
 
+    // ---------- 上下文摘要 ----------
+    private void loadSummary() {
+        try {
+            String t = Memory.readFile(summaryFile);
+            if (t != null) summary = t.trim();
+        } catch (Exception ignored) {}
+    }
+
+    public String summary() { return summary; }
+
+    public synchronized void setSummary(String text) {
+        summary = text == null ? "" : text.trim();
+        try { writeFile(summaryFile, summary); } catch (Exception ignored) {}
+    }
+
+    /** 需要压缩吗：没摘要且消息攒够了，或者已压缩过但又攒够了 */
+    public boolean shouldCompress() {
+        if (history.length() < AUTO_COMPRESS_AT) return false;
+        int already = compressedUpTo();
+        return history.length() - already >= AUTO_COMPRESS_AT;
+    }
+
+    /** 已经压到第几条（用摘要里的标记判断，没有就是 0） */
+    private int compressedUpTo() {
+        try {
+            int i = summary.indexOf("[POS:");
+            if (i < 0) return 0;
+            int j = summary.indexOf(']', i);
+            if (j < 0) return 0;
+            return Integer.parseInt(summary.substring(i + 5, j));
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /**
+     * 取出需要压缩的那一段消息，拼成纯文本给模型总结。
+     * 返回 null 表示没东西可压。
+     */
+    public String pendingBlockForCompress() { return pendingBlockForCompress(false); }
+
+    /**
+     * @param manual true=手动，留最近 4 条就压；false=自动，留 KEEP_TURNS 轮
+     */
+    public String pendingBlockForCompress(boolean manual) {
+        int keep = manual ? 4 : KEEP_TURNS * 2;
+        int from = compressedUpTo();
+        int to = Math.max(from, history.length() - keep);
+        if (to <= from) return null;
+        StringBuilder sb = new StringBuilder();
+        for (int i = from; i < to; i++) {
+            try {
+                JSONObject m = history.getJSONObject(i);
+                String role = m.optString("role", "user");
+                String who = "user".equals(role) ? "他" : "我";
+                sb.append(who).append("：").append(m.optString("content", "")).append('\n');
+            } catch (Exception ignored) {}
+        }
+        return sb.length() == 0 ? null : sb.toString();
+    }
+
+    /** 压缩到第几条（供结果写回） */
+    public int pendingCompressTo() { return pendingCompressTo(false); }
+
+    public int pendingCompressTo(boolean manual) {
+        int keep = manual ? 4 : KEEP_TURNS * 2;
+        int from = compressedUpTo();
+        return Math.max(from, history.length() - keep);
+    }
+
+    /** 把模型给出的摘要合并进来，并记账压到哪了 */
+    public synchronized String mergeSummary(String newPart, int upTo) {
+        StringBuilder sb = new StringBuilder();
+        // 老摘要里的正文（去掉 POS 标记）
+        String oldBody = summary;
+        int i = oldBody.indexOf("[POS:");
+        if (i >= 0) {
+            int j = oldBody.indexOf(']', i);
+            if (j >= 0) oldBody = (oldBody.substring(0, i) + oldBody.substring(j + 1)).trim();
+        }
+        if (!oldBody.isEmpty()) sb.append(oldBody).append('\n');
+        if (newPart != null && !newPart.trim().isEmpty()) sb.append(newPart.trim()).append('\n');
+
+        String body = sb.toString().trim();
+        // 太长就只留后半段（新的更重要）
+        if (body.length() > SUMMARY_MAX_CHARS) {
+            body = body.substring(body.length() - SUMMARY_MAX_CHARS);
+        }
+        String merged = "[POS:" + upTo + "]\n" + body;
+        setSummary(merged);
+        return merged;
+    }
+
+    public synchronized void clearSummary() {
+        setSummary("");
+    }
+
+    /** 粗估一段文字的 token（中文约 1.5 字/token） */
+    public static int roughTokens(String s) {
+        if (s == null) return 0;
+        return (int) (s.length() / 1.5) + 1;
+    }
+
     // ---------- 历史 ----------
     private void loadHistory() {
         try {
@@ -193,7 +304,20 @@ public class Chat {
             if (!r.line.isEmpty()) sb.append(r.line).append('\n');
         } catch (Exception ignored) {}
 
-        // ④ 说话规矩
+        // ④ 早期对话的摘要（压缩过的部分）
+        if (!summary.isEmpty()) {
+            String body = summary;
+            int i = body.indexOf("[POS:");
+            if (i >= 0) {
+                int j = body.indexOf(']', i);
+                if (j >= 0) body = (body.substring(0, i) + body.substring(j + 1)).trim();
+            }
+            if (!body.isEmpty()) {
+                sb.append("\n【更早之前聊过的（摘要）】\n").append(body).append('\n');
+            }
+        }
+
+        // ⑤ 说话规矩
         sb.append("\n（说人话。一次一两句，别写小作文。别用「根据记忆」这种词，")
                 .append("别把老事当新事说。不确定的事别瞎编。）\n");
 
