@@ -40,6 +40,7 @@ public class SettingsDrawer {
         void onStatusFields();
         void onMemories();
         void onAnalyze();
+        void onCompress();
         void onChatBg();
         boolean isStatusOn();
         void onClose();
@@ -261,6 +262,7 @@ public class SettingsDrawer {
         section("记忆");
         itemCard("🧠", "共享记忆与偏好", "看看她记住了什么", () -> host.onMemories());
         itemCard("✨", "AI 分析并提取偏好", "手动触发，存到对话记忆", () -> host.onAnalyze());
+        itemCard("🗜", "压缩上下文", "把早期对话压成摘要，省 token 又不失忆", () -> host.onCompress());
 
         section("此对话设置");
         itemCard("📤", "导出全部数据", "聊天记录 + 记忆 + 设置", () -> host.onExportChat());
@@ -440,6 +442,7 @@ public class SettingsDrawer {
         if (t.contains("分析") || t.contains("提取")) return LineIconDrawable.STAR;
         if (t.contains("导出")) return LineIconDrawable.DOWNLOAD;
         if (t.contains("清空")) return LineIconDrawable.BROOM;
+        if (t.contains("压缩") || t.contains("上下文")) return LineIconDrawable.LAYER;
         if (t.contains("配置") || t.contains("AI 信息")) return LineIconDrawable.SLIDERS;
         if (t.contains("API") || t.contains("Key")) return LineIconDrawable.KEY;
         if (t.contains("运行")) return LineIconDrawable.SIGNAL;
